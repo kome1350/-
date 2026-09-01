@@ -27,6 +27,12 @@ IMAGE_MODEL_CHOICES = [
     "stabilityai/stable-diffusion-xl-base-1.0",
 ]
 
+# 参考画像を使った編集（image-to-image）に対応したモデル
+DEFAULT_IMAGE_TO_IMAGE_MODEL = "black-forest-labs/FLUX.1-Kontext-dev"
+IMAGE_TO_IMAGE_MODEL_CHOICES = [
+    "black-forest-labs/FLUX.1-Kontext-dev",
+]
+
 DEFAULT_VIDEO_MODEL = "Wan-AI/Wan2.2-TI2V-5B"
 VIDEO_MODEL_CHOICES = [
     "Wan-AI/Wan2.2-TI2V-5B",
@@ -55,17 +61,27 @@ class HuggingFaceImageProvider(ImageProvider):
         width: int = 1024,
         height: int = 1024,
         seed: Optional[int] = None,
+        reference_image: Optional[bytes] = None,
         **kwargs,
     ) -> bytes:
-        image = self.client.text_to_image(
-            prompt,
-            model=model or DEFAULT_IMAGE_MODEL,
-            negative_prompt=negative_prompt or None,
-            width=width,
-            height=height,
-            seed=seed,
-        )
-        # InferenceClient.text_to_image は PIL.Image を返す
+        if reference_image is not None:
+            # 参考画像あり: image-to-image（画像編集）
+            image = self.client.image_to_image(
+                reference_image,
+                prompt=prompt,
+                model=model or DEFAULT_IMAGE_TO_IMAGE_MODEL,
+                negative_prompt=negative_prompt or None,
+            )
+        else:
+            image = self.client.text_to_image(
+                prompt,
+                model=model or DEFAULT_IMAGE_MODEL,
+                negative_prompt=negative_prompt or None,
+                width=width,
+                height=height,
+                seed=seed,
+            )
+        # InferenceClient は PIL.Image を返す
         buf = io.BytesIO()
         image.save(buf, format="PNG")
         return buf.getvalue()

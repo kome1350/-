@@ -38,8 +38,16 @@ class PollinationsImageProvider(ImageProvider):
         height: int = 1024,
         seed: Optional[int] = None,
         enhance: bool = True,
+        reference_image: Optional[bytes] = None,
         **kwargs,
     ) -> bytes:
+        if reference_image is not None:
+            raise RuntimeError(
+                "Pollinationsエンジンは、アップロードした画像ファイルを直接使う"
+                "参考画像機能に対応していません（公開URLの画像のみ対応）。"
+                "参考画像を使う場合は「Hugging Face」または「ローカルGPU」エンジンを選んでください。"
+            )
+
         encoded_prompt = urllib.parse.quote(prompt.strip())
         url = self.BASE_URL + encoded_prompt
 

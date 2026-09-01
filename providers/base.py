@@ -28,10 +28,15 @@ class ImageProvider(ABC):
         width: int = 1024,
         height: int = 1024,
         seed: Optional[int] = None,
+        reference_image: Optional[bytes] = None,
         **kwargs,
     ) -> bytes:
         """
         プロンプトから画像を生成し、画像バイナリ（PNG/JPEG等）を返す。
+
+        reference_image が渡された場合、対応しているプロバイダーは
+        画像編集（image-to-image）として、その画像を元に生成する。
+        対応していないプロバイダーは無視するか例外を送出してよい。
 
         実装側は失敗時に例外を送出してよい（呼び出し側でキャッチしてUIに表示する）。
         """

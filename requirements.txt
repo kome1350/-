@@ -3,3 +3,15 @@ requests>=2.31
 huggingface_hub>=0.28.0
 python-dotenv>=1.0
 Pillow>=10.0
+
+# --- ローカルGPU生成を使う場合のみ必要 -------------------------------------
+# PyTorch（torch / torchvision / torchaudio）は、GPUの種類に合わせて
+# 別途インストールしてください（README.md の「ローカルGPUで生成する」を参照）。
+# ここに含めていない理由: `pip install torch` だけだとCPU版がインストールされ、
+# 非常に遅くなってしまうためです。
+diffusers>=0.31.0
+transformers>=4.46.0
+accelerate>=1.0.0
+safetensors>=0.4.0
+imageio>=2.34.0
+imageio-ffmpeg>=0.5.0

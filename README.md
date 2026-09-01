@@ -7,6 +7,9 @@ Python + Streamlit で作った、無料で使えるAIエンジンによる画�
 - 🖼️ **画像生成**: [Pollinations.AI](https://pollinations.ai/) を使えば **登録・APIキー不要で完全無料**
 - 🖼️ **画像生成（高品質・任意）**: [Hugging Face](https://huggingface.co/) の無料トークンを使うと FLUX.1 等の高品質モデルも選べます
 - 🎬 **動画生成**: Hugging Face の Inference Providers 経由（無料トークン必須）
+- 🖥️ **ローカルGPU生成（画像・動画とも対応）**: 自分のPCのNVIDIA GPUを使えば、**完全無料・無制限**（電気代のみ）で生成できます。クラウドのクレジット上限を気にする必要がありません
+- 💬 **チャット形式での画像生成**: メッセージを送るだけで画像が生成される、会話風のUI
+- 🖼️➡️🖼️ **参考画像を使った生成（image-to-image）**: 手持ちの画像を添付すると、それを元に画像を編集・変換できます（Hugging Face / ローカルGPUエンジンのみ対応。Pollinationsは公開URLの画像のみ対応のため非対応）
 - 🗂️ 生成履歴をギャラリー表示・ダウンロード・削除
 - 🔌 プロバイダーを差し替え可能な設計（`providers/` に実装を足すだけで有料APIにも拡張できます）
 
@@ -43,6 +46,62 @@ streamlit run app.py
 2. https://huggingface.co/settings/tokens を開き、「Create new token」
 3. 権限で **「Make calls to Inference Providers」** を有効にして発行
 4. `.env` の `HF_TOKEN` に貼り付け、またはアプリのサイドバーに直接入力
+
+## 🖥️ ローカルGPUで生成する（完全無料・無制限）
+
+NVIDIA GPU（目安: VRAM 8GB以上）を積んだPCなら、クラウドAPIを使わず自分のPCで
+画像・動画を生成できます。クレジット上限も無く、電気代以外のコストはかかりません。
+
+### 対応状況の目安
+
+- **画像生成**: VRAM 8GBあれば `stabilityai/sdxl-turbo` が快適に動きます（高速・高品質）
+- **動画生成**: VRAM 8GB前後では `AnimateDiff`（SD1.5ベースの軽量手法）が現実的です。
+  クラウドの高品質モデルと比べると、解像度・秒数は控えめ（数秒程度）になります
+
+### セットアップ手順
+
+1. **NVIDIAドライバーを最新にする**（特にRTX 50シリーズ等の新しいGPUの場合は必須）
+   https://www.nvidia.com/Download/index.aspx から最新ドライバーを入れてください
+
+2. **CUDA対応版PyTorchをインストール**（`requirements.txt` には含まれていないので、先にこちらを実行）
+
+   ```powershell
+   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+   ```
+
+   ⚠️ RTX 50シリーズ（Blackwell世代、例: RTX 5060/5070/5080/5090）を使う場合、
+   **PyTorch 2.7.0以降 かつ CUDA 12.8ビルド**が必要です。上のコマンドはそれを満たしています。
+   もし `CUDA error: no kernel image is available` のようなエラーが出た場合は、
+   一度 `pip uninstall torch torchvision torchaudio` してから上のコマンドを入れ直してください。
+   最新の推奨コマンドは https://pytorch.org/get-started/locally/ でも確認できます。
+
+3. **残りの依存パッケージをインストール**（まだの場合）
+
+   ```powershell
+   pip install -r requirements.txt
+   ```
+
+4. **動作確認**（任意）
+
+   ```powershell
+   python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+   ```
+
+   `True` と、GPUの名前（例: `NVIDIA GeForce RTX 5060`）が表示されればOKです。
+
+5. アプリを起動し、画像生成・動画生成それぞれの「生成エンジン」で
+   **「ローカルGPU（無料・無制限・要セットアップ）」** を選んでください。
+
+### 知っておいてほしいこと
+
+- **初回生成時はモデルのダウンロードが走ります**（画像モデルで数GB、動画モデルで数GB）。
+  回線速度にもよりますが、数分かかることがあります。2回目以降はキャッシュされるので高速です
+- モデルは `~/.cache/huggingface/`（Windowsでは `C:\Users\<ユーザー名>\.cache\huggingface\`）
+  に保存されます。ディスク容量に余裕を持たせてください
+- VRAM不足の場合は `CUDA out of memory` のようなエラーになります。その場合は画像サイズを
+  小さくする（512×512など）、動画のフレーム数を減らす、といった調整を試してください
+- Streamlit Community Cloud（クラウド版）にはGPUが無いため、**ローカルGPU生成はPC上で
+  直接アプリを起動した場合のみ**使えます（`streamlit run app.py` で起動した場合）
 
 ## 📱 スマホから・外出先からアクセスする（無料デプロイ）
 
@@ -104,7 +163,8 @@ ai_gen_studio/
 ├── providers/
 │   ├── base.py                  # ImageProvider / VideoProvider の共通インターフェース
 │   ├── pollinations_provider.py # 無料・登録不要の画像生成
-│   └── huggingface_provider.py  # Hugging Face経由の画像・動画生成
+│   ├── huggingface_provider.py  # Hugging Face経由の画像・動画生成
+│   └── local_provider.py        # ローカルGPUでの画像・動画生成
 ├── utils/
 │   └── history.py                # 生成履歴の保存・一覧・削除
 ├── outputs/                     # 生成された画像・動画とメタデータの保存先
