@@ -7,6 +7,9 @@ AI画像・動画生成スタジオ
     streamlit run app.py
 """
 
+import io
+import time
+import zipfile
 from pathlib import Path
 
 import streamlit as st
@@ -95,8 +98,8 @@ with st.sidebar:
         "providers/ 以下に実装を追加するだけで拡張できます。"
     )
 
-tab_chat, tab_image, tab_video, tab_history = st.tabs(
-    ["💬 チャットで生成", "🖼️ 画像生成（詳細設定）", "🎬 動画生成", "🗂️ 生成履歴"]
+tab_chat, tab_image, tab_batch, tab_video, tab_history = st.tabs(
+    ["💬 チャットで生成", "🖼️ 画像生成（詳細設定）", "📦 一括生成", "🎬 動画生成", "🗂️ 生成履歴"]
 )
 
 # ---------------------------------------------------------------------------
@@ -331,6 +334,191 @@ with tab_image:
             )
         else:
             st.info("プロンプトを入力して「画像を生成」を押すと、ここに結果が表示されます。")
+
+# ---------------------------------------------------------------------------
+# 一括生成タブ
+# ---------------------------------------------------------------------------
+MAX_BATCH_COUNT = 50
+
+with tab_batch:
+    st.caption("複数枚の画像をまとめて生成します（最大50枚）。")
+
+    batch_engine = st.radio(
+        "生成エンジン",
+        ["Pollinations（無料・登録不要）", "Hugging Face（要トークン・高品質）", ENGINE_LOCAL],
+        key="batch_engine",
+        horizontal=True,
+    )
+
+    if batch_engine.startswith("Pollinations"):
+        st.info(
+            "Pollinationsは匿名利用だと約15秒に1回のレート制限があるため、"
+            "枚数が多いとかなり時間がかかります（例: 30枚で約7〜8分）。"
+            "大量生成には「ローカルGPU」がおすすめです。",
+            icon="⏳",
+        )
+    elif batch_engine.startswith("Hugging Face"):
+        st.info(
+            "Hugging Faceは1枚ごとに無料クレジットを消費します。"
+            "枚数が多いと上限に達しやすいのでご注意ください。",
+            icon="💳",
+        )
+    else:
+        st.info("ローカルGPUはレート制限・クレジット消費が無いため、大量生成に向いています。", icon="🖥️")
+
+    batch_mode = st.radio(
+        "モード",
+        ["同じプロンプトでバリエーションを生成", "複数のプロンプトをリストで指定"],
+        key="batch_mode",
+    )
+
+    batch_prompts_from_list = None
+    if batch_mode.startswith("同じ"):
+        batch_base_prompt = st.text_area(
+            "プロンプト",
+            height=80,
+            placeholder="例: 桜と富士山、水彩画風",
+            key="batch_base_prompt",
+        )
+        batch_count = st.number_input(
+            "生成枚数", min_value=1, max_value=MAX_BATCH_COUNT, value=10, step=1, key="batch_count"
+        )
+    else:
+        batch_prompt_list_text = st.text_area(
+            "プロンプト一覧（1行に1つ）",
+            height=180,
+            placeholder="犬の写真\n猫の写真\n山の風景\n...",
+            key="batch_prompt_list_text",
+        )
+        batch_prompts_from_list = [
+            line.strip() for line in batch_prompt_list_text.splitlines() if line.strip()
+        ]
+        if len(batch_prompts_from_list) > MAX_BATCH_COUNT:
+            st.warning(f"最大{MAX_BATCH_COUNT}行までです。先頭{MAX_BATCH_COUNT}行のみ使用されます。")
+            batch_prompts_from_list = batch_prompts_from_list[:MAX_BATCH_COUNT]
+        if batch_prompts_from_list:
+            st.caption(f"{len(batch_prompts_from_list)} 件のプロンプトが入力されています。")
+
+    batch_negative_prompt = st.text_input("ネガティブプロンプト（共通・任意）", key="batch_negative_prompt")
+
+    col_bw, col_bh = st.columns(2)
+    with col_bw:
+        batch_width = st.selectbox("幅", [512, 768, 1024], index=0, key="batch_width")
+    with col_bh:
+        batch_height = st.selectbox("高さ", [512, 768, 1024], index=0, key="batch_height")
+
+    if batch_engine.startswith("Pollinations"):
+        batch_model = st.selectbox("モデル", AVAILABLE_MODELS, index=0, key="batch_model_pollinations")
+    elif batch_engine == ENGINE_LOCAL:
+        batch_model = st.selectbox(
+            "モデル（ローカル実行）",
+            LOCAL_IMAGE_MODEL_CHOICES,
+            index=LOCAL_IMAGE_MODEL_CHOICES.index(DEFAULT_LOCAL_IMAGE_MODEL),
+            key="batch_model_local",
+        )
+    else:
+        batch_model = st.selectbox(
+            "モデル（Hugging Face）",
+            IMAGE_MODEL_CHOICES,
+            index=IMAGE_MODEL_CHOICES.index(DEFAULT_IMAGE_MODEL),
+            key="batch_model_hf",
+        )
+
+    batch_start_clicked = st.button("📦 一括生成を開始", type="primary", use_container_width=True)
+
+    if batch_start_clicked:
+        if batch_mode.startswith("同じ"):
+            if not batch_base_prompt.strip():
+                st.warning("プロンプトを入力してください。")
+                jobs = []
+            else:
+                jobs = [batch_base_prompt] * int(batch_count)
+        else:
+            jobs = batch_prompts_from_list or []
+            if not jobs:
+                st.warning("プロンプトを1行以上入力してください。")
+
+        if jobs and batch_engine.startswith("Hugging Face") and not hf_token:
+            st.error("Hugging Face トークンをサイドバーから入力してください。")
+            jobs = []
+
+        if jobs:
+            if batch_engine.startswith("Pollinations"):
+                provider = PollinationsImageProvider(api_key=DEFAULT_POLLINATIONS_KEY or None)
+                provider_name = "pollinations"
+            elif batch_engine == ENGINE_LOCAL:
+                provider = LocalImageProvider()
+                provider_name = "local"
+            else:
+                provider = HuggingFaceImageProvider(api_key=hf_token)
+                provider_name = "huggingface"
+
+            results = []
+            progress_bar = st.progress(0.0)
+            status_text = st.empty()
+            total = len(jobs)
+
+            for i, job_prompt in enumerate(jobs):
+                status_text.text(f"生成中... ({i + 1}/{total})")
+                try:
+                    image_bytes = provider.generate(
+                        job_prompt,
+                        model=batch_model,
+                        width=batch_width,
+                        height=batch_height,
+                        negative_prompt=batch_negative_prompt or None,
+                    )
+                    record = save_generation(
+                        "image", image_bytes, job_prompt, provider_name, batch_model, "png"
+                    )
+                    results.append({"ok": True, "path": str(record.path), "prompt": job_prompt})
+                except Exception as exc:  # noqa: BLE001
+                    results.append({"ok": False, "error": str(exc), "prompt": job_prompt})
+
+                progress_bar.progress((i + 1) / total)
+
+                # Pollinationsの匿名レート制限（約15秒に1回）に配慮
+                if batch_engine.startswith("Pollinations") and i < total - 1:
+                    time.sleep(15)
+
+            status_text.empty()
+            progress_bar.empty()
+
+            success_count = sum(1 for r in results if r["ok"])
+            fail_count = total - success_count
+            if fail_count == 0:
+                st.success(f"{total}枚すべて生成できました！")
+            else:
+                st.warning(f"{success_count}枚成功、{fail_count}枚失敗しました。")
+
+            st.session_state["batch_results"] = results
+
+    batch_results = st.session_state.get("batch_results")
+    if batch_results:
+        ok_results = [r for r in batch_results if r["ok"]]
+        if ok_results:
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for r in ok_results:
+                    p = Path(r["path"])
+                    if p.exists():
+                        zf.write(p, arcname=p.name)
+            st.download_button(
+                "📦 ZIPでまとめてダウンロード",
+                data=zip_buf.getvalue(),
+                file_name="batch_images.zip",
+                mime="application/zip",
+                use_container_width=True,
+            )
+
+        cols = st.columns(4)
+        for idx, r in enumerate(batch_results):
+            with cols[idx % 4]:
+                if r["ok"]:
+                    st.image(r["path"], use_container_width=True)
+                else:
+                    st.error(f"失敗: {r['error'][:60]}")
+                st.caption(r["prompt"][:40] + ("..." if len(r["prompt"]) > 40 else ""))
 
 # ---------------------------------------------------------------------------
 # 動画生成タブ
